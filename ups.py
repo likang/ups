@@ -2,21 +2,27 @@
 """
 placeholder
 """
+import cgi
 import functools
+import json
 import urlparse
+import urllib
+import urllib2
 import base64
 import logging
 import stat
+import mimetypes
 
 
 __author__ = 'Kang Li<i@likang.me>'
-__version__ = '0.0.1'
+__version__ = '0.0.2'
 
 import os
 import sys
-import threading
 import hashlib
+from time import gmtime
 from SocketServer import ThreadingMixIn
+from datetime import datetime, timedelta
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 
 try:
@@ -24,12 +30,11 @@ try:
 except ImportError:
     from configparser import ConfigParser
 
-from time import time, gmtime
 try:
     from email.utils import parsedate_tz
-except ImportError: # pragma: no cover
+except ImportError:
     from email.Utils import parsedate_tz
-from datetime import datetime, timedelta
+
 
 PY2 = sys.version_info[0] == 2
 if PY2:
@@ -183,6 +188,14 @@ class Handler(BaseHTTPRequestHandler):
         logging.info('save file to: %s', dest_path)
 
     def do_POST(self):
+        if self.get_header('Content-Type', '').startswith(
+                'multipart/form-data'):
+            self.do_form()
+        else:
+            self.do_mkdir()
+
+    @authenticated
+    def do_mkdir(self):
         """Make dirs """
         dest_path = os.path.join(self.bucket_path, self.file_path)
         if self.get_header('Folder', '') != 'true':
@@ -233,12 +246,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write('\n')
         logging.info('rm file/directory : %s', dest_path)
 
-    @authenticated
     def do_GET(self):
         """Show directory info or download file or show usage  """
+        path = self.path
+        self.prepare()
+
         if self.query_str == 'usage':
+            self.path = path
             self.do_usage()
             return
+
         dest_path = os.path.join(self.bucket_path, self.file_path)
         if not os.path.exists(dest_path):
             logging.error('file does not exist')
@@ -246,20 +263,23 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if os.path.isdir(dest_path):
+            self.path = path
             self.do_dir_info()
-            return
         else:
             self.do_download()
-            return
 
     def do_download(self):
         """Download file """
         dest_path = os.path.join(self.bucket_path, self.file_path)
+        self.send_response(200)
+        content_type = mimetypes.guess_type(dest_path)
+        if content_type[0] is not None:
+            self.send_header('Content-Type', content_type[0])
+        self.end_headers()
         with open(dest_path, 'rb') as f:
             self.wfile.write(f.read())
-        self.send_response(200)
-        self.end_headers()
 
+    @authenticated
     def do_dir_info(self):
         """Show directory info"""
         dest_path = os.path.join(self.bucket_path, self.file_path)
@@ -278,6 +298,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write('\n'.join(result))
 
+    @authenticated
     def do_usage(self):
         """Show usage"""
         size = 0
@@ -288,6 +309,118 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(str(size))
+
+    def do_form(self):
+        """Form API"""
+        form = cgi.FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={'REQUEST_METHOD': 'POST',
+                     'CONTENT_TYPE': self.get_header('Content-Type'),
+                     })
+        if 'policy' not in form:
+            self.write_form_resp(400, 'Not accept, Miss policy.', {},
+                                 '', None)
+            return
+        if 'signature' not in form:
+            self.write_form_resp(400, 'Not accept, Miss signature.', {},
+                                 '', None)
+            return
+
+        if 'file' not in form:
+            self.write_form_resp(400, 'Not accept, No file data.', {},
+                                 '', None)
+            return
+
+        policy_str = form['policy'].value
+        signature = form['signature'].value
+        file_content = form['file'].file.read()
+        file_name = form['file'].filename
+        policy = json.loads(base64.b64decode(policy_str))
+
+        if 'bucket' not in policy:
+            self.write_form_resp(400, 'Not accept, Bucket is null.', policy,
+                                 '', None)
+            return
+        self.bucket = policy['bucket']
+        if not options.has_section(self.bucket):
+            self.write_form_resp(404, 'Bucket does not exist.', policy,
+                                 '', None)
+            return
+
+        self.bucket_path = options.get(self.bucket, 'path', None)
+
+        form_secret = options.get(self.bucket, 'form_secret', '')
+        if signature != hashlib.md5(policy_str+'&' + form_secret):
+            self.write_form_resp(403, 'Not accept, Signature error.', policy,
+                                 '', form_secret)
+            return
+        if 'save_key' not in policy:
+            self.write_form_resp(400, 'Not accept, Save-key is null.', policy,
+                                 '', form_secret)
+            return
+
+        save_key = policy['save_key']
+        now = datetime.now()
+        year, mon, day, hour, minu, sec = \
+            now.strftime('%Y %m %d %H %M %S').split()
+        replaces = {
+            'year': year,
+            'mon': mon,
+            'day': day,
+            'hour': hour,
+            'min': minu,
+            'sec': sec,
+            'filemd5': hashlib.md5(file_content).hexdigest(),
+            'random': 16,
+            'random32': 32,
+            'filename': file_name,
+            'suffix': os.path.basename(file_name),
+            '.suffix': '.' + os.path.basename(file_name)
+        }
+        for k, v in replaces.items():
+            save_key = save_key.replace('{%s}' % k, v)
+
+        dest_path = os.path.join(self.bucket_path, save_key)
+        if not os.path.exists(os.path.dirname(dest_path)):
+            try:
+                os.makedirs(os.path.dirname(dest_path))
+            except OSError as ex:
+                self.write_form_resp(503, 'System Error, please try again.',
+                                     policy, save_key, form_secret)
+                return
+            with open(dest_path, 'rb') as f:
+                f.write(file_content)
+        self.write_form_resp(200, 'OK', policy, save_key, form_secret)
+
+    def write_form_resp(self, code, message, policy, save_key, form_secret):
+        response = {'code': code,
+                    'message': message,
+                    'time': int(datetime.now().strftime('%s')),
+                    'url': save_key,
+                    }
+        if form_secret:
+            response['sign'] = hashlib.md5('&'.join([
+                code, message, save_key,
+                response['time'], form_secret])).hexdigest()
+        else:
+            response['non-sign'] = hashlib.md5('&'.join([
+                code, message, save_key, response['time']])).hexdigest()
+
+        if 'return-url' in policy:
+            return_url = policy['return-url'] + '?' + urllib.urlencode(response)
+            self.send_response(302)
+            self.send_header('Location', return_url)
+            self.end_headers()
+            return
+
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(json.dumps(response, ensure_ascii=False))
+
+        if 'notify-url' in policy:
+            notify_url = policy['notify-url'] + '?' + urllib.urlencode(response)
+            urllib2.urlopen(notify_url, {})
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
