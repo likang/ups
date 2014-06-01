@@ -62,4 +62,4 @@ $ ups
 
 [github](https://github.com/likang/ups)
 
-[gitcafe](https://gitcafe.com/likang/ups)
+[gitcafe](https://gitcafe.com/likang/ups-for-UPYUN)
