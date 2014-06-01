@@ -552,6 +552,7 @@ host=127.0.0.1
 ;username=foo
 ;password=bar
 ;path=/some/path
+;form_key=testkey
 ;
 
 ;[more_buckets] ; your bucket name
