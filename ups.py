@@ -42,9 +42,6 @@ else:
 
 conf_path = os.path.expanduser('~/.upsrc')
 options = ConfigParser()
-logging.basicConfig(level=logging.INFO,
-                    format='[%(levelname)1.1s %(asctime)s '
-                           '%(module)s:%(lineno)d] %(message)s')
 
 
 def authenticated(method):
@@ -55,6 +52,10 @@ def authenticated(method):
         self.prepare()
         if self.bucket is None:
             self.write_error(400, 'Bad Request')
+            return
+
+        if self.bucket_path is None or not os.path.isdir(self.bucket_path):
+            self.write_error(503, 'System Error')
             return
 
         auth = self.headers.getheader('Authorization', '')
@@ -122,8 +123,9 @@ class Handler(BaseHTTPRequestHandler):
         tmp = self.path.split('/')
         if len(tmp) >= 2:
             self.bucket = tmp[1]
-            self.bucket_path = options.get(self.bucket, 'path')
-            self.file_path = self.path[len(self.bucket)+2:]
+            if options.has_section(self.bucket):
+                self.bucket_path = options.get(self.bucket, 'path', None)
+                self.file_path = self.path[len(self.bucket)+2:]
 
     def get_header(self, name, default=None):
         return self.headers.getheader(name, default=default)
@@ -233,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
 
     @authenticated
     def do_GET(self):
-        """ Directory info or download file or usage  """
+        """Show directory info or download file or show usage  """
         if self.query_str == 'usage':
             self.do_usage()
             return
@@ -251,9 +253,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
     def do_download(self):
-        pass
+        """Download file """
+        dest_path = os.path.join(self.bucket_path, self.file_path)
+        with open(dest_path, 'rb') as f:
+            self.wfile.write(f.read())
+        self.send_response(200)
+        self.end_headers()
 
     def do_dir_info(self):
+        """Show directory info"""
         dest_path = os.path.join(self.bucket_path, self.file_path)
         result = []
         for f in os.listdir(dest_path):
@@ -271,9 +279,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write('\n'.join(result))
 
     def do_usage(self):
+        """Show usage"""
+        size = 0
+        for dir_path, dir_names, files in os.walk(self.bucket_path):
+            for f in files:
+                size += os.stat(os.path.join(dir_path, f)).st_size
+
         self.send_response(200)
         self.end_headers()
-        self.wfile.write('0')
+        self.wfile.write(str(size))
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -357,7 +371,11 @@ host=127.0.0.1
     with open(conf_path, 'r') as f:
         options.readfp(f)
 
-if __name__ == '__main__':
+
+def main():
+    logging.basicConfig(level=logging.INFO,
+                        format='[%(levelname)1.1s %(asctime)s '
+                               '%(module)s:%(lineno)d] %(message)s')
     load_options()
 
     host = options.get('server', 'host', '127.0.0.1')
@@ -366,3 +384,6 @@ if __name__ == '__main__':
 
     logging.info('Starting server on port %s, use <Ctrl-C> to stop')
     http_server.serve_forever()
+
+if __name__ == '__main__':
+    main()
