@@ -22,6 +22,10 @@
 pip install ups
 ```
 
+注意：UPS 依赖 Pillow(亦即 PIL), 而此软件包需要本机有 libjpg / libpng 等库才能更好
+的工作， 请首先确认本机已有这些图片处理库。如果确实这些库，又已经把 Pillow 安装好了，
+可以尝试 pip uninstall pillow 卸载后，安装上面所指的库，然后重新 pip install pillow。
+
 ## 使用
 
 保存如下示例的文件到个人目录的 .upsrc 文件中 （支持多个 bucket ）
