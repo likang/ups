@@ -6,9 +6,6 @@ import io
 import cgi
 import functools
 import json
-import urlparse
-import urllib
-import urllib2
 import base64
 import logging
 import stat
@@ -16,33 +13,39 @@ import mimetypes
 
 
 __author__ = 'Kang Li<i@likang.me>'
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 
 import os
 import sys
 import hashlib
 from time import gmtime
 from PIL import Image
-from SocketServer import ThreadingMixIn
 from datetime import datetime, timedelta
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
-
-try:
-    from ConfigParser import ConfigParser
-except ImportError:
-    from configparser import ConfigParser
-
-try:
-    from email.utils import parsedate_tz
-except ImportError:
-    from email.Utils import parsedate_tz
-
 
 PY2 = sys.version_info[0] == 2
+
+from email.utils import parsedate_tz
 if PY2:
+    import urlparse
+    from ConfigParser import ConfigParser
+    import urllib2
+    from SocketServer import ThreadingMixIn
+    from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+    from urllib import unquote, urlencode
+
     integer_types = (int, long)
     b = lambda v: v
 else:
+    from urllib import parse as urlparse
+    from urllib import request as urllib2
+    from urllib.parse import unquote, urlencode
+    from configparser import ConfigParser
+    from socketserver import ThreadingMixIn
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from http.client import HTTPMessage
+    HTTPMessage.getheader = HTTPMessage.get
+
+
     integer_types = (int, )
     b = lambda v: v.encode('utf-8')
 
@@ -86,12 +89,12 @@ def authenticated(method):
                 error_msg = 'Need Date Header'
             else:
                 user, sign = auth_content.split(':')
-                com_sign = hashlib.md5('&'.join(
+                com_sign = hashlib.md5(b('&'.join(
                     [self.command,
                      self.uri,
                      date_str,
                      self.headers.getheader('Content-Length', '0'),
-                     hashlib.md5(password).hexdigest()])).hexdigest()
+                     hashlib.md5(b(password)).hexdigest()]))).hexdigest()
                 logging.info('user %s sign %s', username, com_sign)
                 if user != username or sign != com_sign:
                     error_msg = 'Sign error'
@@ -131,12 +134,12 @@ class Handler(BaseHTTPRequestHandler):
         if len(tmp) >= 2:
             self.bucket = tmp[1]
             if options.has_section(self.bucket):
-                self.bucket_path = options.get(self.bucket, 'path', None)
+                self.bucket_path = options.get(self.bucket, 'path')
                 self.file_path = self.path[len(self.bucket)+2:]
-                self.file_path = urllib.unquote(self.file_path)
+                self.file_path = unquote(self.file_path)
 
     def get_header(self, name, default=None):
-        return self.headers.getheader(name, default=default)
+        return self.headers.getheader(name, default)
 
     def get_headers(self, name):
         return self.headers.getheaders(name)
@@ -144,8 +147,7 @@ class Handler(BaseHTTPRequestHandler):
     def write_error(self, code, msg):
         self.send_response(code)
         self.end_headers()
-        self.wfile.write(msg)
-        self.wfile.write('\n')
+        self.wfile.write(b(msg))
 
     @authenticated
     def do_HEAD(self):
@@ -162,7 +164,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('x-upyun-file-size', file_info.st_size)
         self.send_header('x-upyun-file-date', int(file_info.st_mtime))
         self.end_headers()
-        self.wfile.write('\n')
 
     @authenticated
     def do_PUT(self):
@@ -241,7 +242,6 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.end_headers()
-        self.wfile.write('\n')
         logging.info('save file to: %s', dest_path)
 
     def do_POST(self):
@@ -275,7 +275,6 @@ class Handler(BaseHTTPRequestHandler):
                     return
         self.send_response(200)
         self.end_headers()
-        self.wfile.write('\n')
         logging.info('mkdir : %s', dest_path)
 
     @authenticated
@@ -300,7 +299,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_error(503, 'System Error')
         self.send_response(200)
         self.end_headers()
-        self.wfile.write('\n')
         logging.info('rm file/directory : %s', dest_path)
 
     def do_GET(self):
@@ -353,7 +351,7 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.end_headers()
-        self.wfile.write('\n'.join(result))
+        self.wfile.write(b('\n'.join(result)))
 
     @authenticated
     def do_usage(self):
@@ -365,7 +363,7 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(str(size))
+        self.wfile.write(b(str(size)))
 
     def do_form(self):
         """Form API"""
@@ -408,7 +406,7 @@ class Handler(BaseHTTPRequestHandler):
         self.bucket_path = options.get(self.bucket, 'path', None)
 
         form_secret = options.get(self.bucket, 'form_secret', '')
-        if signature != hashlib.md5(policy_str+'&' + form_secret):
+        if signature != hashlib.md5(b(policy_str+'&' + form_secret)):
             self.write_form_resp(403, 'Not accept, Signature error.', policy,
                                  '', form_secret)
             return
@@ -457,15 +455,15 @@ class Handler(BaseHTTPRequestHandler):
                     'url': save_key,
                     }
         if form_secret:
-            response['sign'] = hashlib.md5('&'.join([
+            response['sign'] = hashlib.md5(b('&'.join([
                 code, message, save_key,
-                response['time'], form_secret])).hexdigest()
+                response['time'], form_secret]))).hexdigest()
         else:
-            response['non-sign'] = hashlib.md5('&'.join([
-                code, message, save_key, response['time']])).hexdigest()
+            response['non-sign'] = hashlib.md5(b('&'.join([
+                code, message, save_key, response['time']]))).hexdigest()
 
         if 'return-url' in policy:
-            return_url = policy['return-url'] + '?' + urllib.urlencode(response)
+            return_url = policy['return-url'] + '?' + urlencode(response)
             self.send_response(302)
             self.send_header('Location', return_url)
             self.end_headers()
@@ -473,10 +471,10 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(json.dumps(response, ensure_ascii=False))
+        self.wfile.write(b(json.dumps(response, ensure_ascii=False)))
 
         if 'notify-url' in policy:
-            notify_url = policy['notify-url'] + '?' + urllib.urlencode(response)
+            notify_url = policy['notify-url'] + '?' + urlencode(response)
             urllib2.urlopen(notify_url, {})
 
 
@@ -568,11 +566,11 @@ def main():
                                '%(module)s:%(lineno)d] %(message)s')
     load_options()
 
-    host = options.get('server', 'host', '127.0.0.1')
-    port = options.get('server', 'port', '7080')
+    host = options.get('server', 'host')
+    port = options.get('server', 'port')
     http_server = ThreadedHTTPServer((host, int(port)), Handler)
 
-    logging.info('Starting server on port %s, use <Ctrl-C> to stop')
+    logging.info('Starting server on port %s, use <Ctrl-C> to stop' % port)
     http_server.serve_forever()
 
 if __name__ == '__main__':

@@ -7,7 +7,7 @@ except ImportError:
 
 setup(
     name='ups',
-    version='0.0.1',
+    version=__import__('ups').__version__,
     url='http://github.com/likang/ups',
     download_url='http://pypi.python.org/pypi/ups',
     description='A simple upyun server',
@@ -18,6 +18,9 @@ setup(
     author='Kang Li',
     author_email='i@likang.me',
     keywords=['upyun', 'server'],
+    install_requires=[
+        'pillow',
+    ],
     entry_points={
         'console_scripts': [
             'ups=ups:main',
