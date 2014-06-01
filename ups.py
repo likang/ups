@@ -12,9 +12,6 @@ import stat
 import mimetypes
 
 
-__author__ = 'Kang Li<i@likang.me>'
-__version__ = '0.0.3'
-
 import os
 import sys
 import hashlib
@@ -48,6 +45,10 @@ else:
 
     integer_types = (int, )
     b = lambda v: v.encode('utf-8')
+
+
+__author__ = 'Kang Li<i@likang.me>'
+__version__ = '0.0.3'
 
 
 conf_path = os.path.expanduser('~/.upsrc')
@@ -440,7 +441,7 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.exists(os.path.dirname(dest_path)):
             try:
                 os.makedirs(os.path.dirname(dest_path))
-            except OSError as ex:
+            except OSError:
                 self.write_form_resp(503, 'System Error, please try again.',
                                      policy, save_key, form_secret)
                 return
