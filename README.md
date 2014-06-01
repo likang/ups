@@ -19,12 +19,12 @@ pip install ups
 
 ```
 [server]
-host:127.0.0.1
-port:8080
+host=127.0.0.1
+port=8080
 
 [your-bucket-name]
-username:foo
-password:bar
+username=foo
+password=bar
 path=/nfs/images
 
 ```
