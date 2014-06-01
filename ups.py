@@ -2,6 +2,7 @@
 """
 placeholder
 """
+import io
 import cgi
 import functools
 import json
@@ -21,6 +22,7 @@ import os
 import sys
 import hashlib
 from time import gmtime
+from PIL import Image
 from SocketServer import ThreadingMixIn
 from datetime import datetime, timedelta
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
@@ -131,6 +133,7 @@ class Handler(BaseHTTPRequestHandler):
             if options.has_section(self.bucket):
                 self.bucket_path = options.get(self.bucket, 'path', None)
                 self.file_path = self.path[len(self.bucket)+2:]
+                self.file_path = urllib.unquote(self.file_path)
 
     def get_header(self, name, default=None):
         return self.headers.getheader(name, default=default)
@@ -179,8 +182,62 @@ class Handler(BaseHTTPRequestHandler):
                     self.write_error(503, 'System Error')
                     return
 
+        file_content = self.rfile.read(int(self.get_header('Content-Length')))
+
+        i = io.BytesIO()
+        i.write(file_content)
+        i.seek(0)
+        is_picture = True
+        try:
+            im = Image.open(i)
+        except IOError:
+            is_picture = False
+
+        # if it is picture
+        if is_picture:
+            cus_type = self.get_header('x-gmkerl-type', '')
+            cus_value = self.get_header('x-gmkerl-value', '')
+            cus_quanlity = int(self.get_header('x-gmkerl-quality', '95'))
+            cus_unsharp = int(self.get_header('x-gmkerl-unsharp', 'true')
+                              == 'true')
+            ext = os.path.splitext(dest_path)[-1].lstrip('.')
+            width, height = im.size
+            if cus_type == 'fix_width':
+                cus_value = float(cus_value)
+                width_percent = cus_value/width
+                cus_height = int(height*width_percent)
+                im.thumbnail((cus_value, cus_height), cus_unsharp)
+            elif cus_type == 'fix_height':
+                cus_value = float(cus_value)
+                height_percent = (cus_value/float(height))
+                cus_width = int(width*height_percent)
+                im.thumbnail((cus_width, cus_value), cus_unsharp)
+            elif cus_type == 'fix_width_or_height':
+                cus_width, cus_height = map(int, cus_value.split('x'))
+                im.thumbnail((cus_width, cus_height), cus_unsharp)
+            elif cus_type == 'fix_both':
+                cus_width, cus_height = map(int, cus_value.split('x'))
+                im.resize((cus_width, cus_height), cus_unsharp)
+            elif cus_type == 'fix_max':
+                cus_value = float(cus_value)
+                percent = cus_value/max(width, height)
+                im.thumbnail((width*percent, height*percent), cus_unsharp)
+            elif cus_type == 'fix_min':
+                cus_value = float(cus_value)
+                percent = cus_value/min(width, height)
+                im.thumbnail((width*percent, height*percent), cus_unsharp)
+            elif cus_type == 'fix_scale':
+                cus_value = int(cus_value)
+                im.resize((width*cus_value/100.0, height*cus_value/100.0),
+                          cus_unsharp)
+            i.seek(0)
+            im.save(i, ext if ext.lower() != 'jpg' else 'jpeg',
+                    quantity=cus_quanlity)
+            file_content = i.getvalue()
+            i.close()
+
         with open(dest_path, 'wb') as f:
-            f.write(self.rfile.read(int(self.get_header('Content-Length'))))
+            f.write(file_content)
 
         self.send_response(200)
         self.end_headers()
