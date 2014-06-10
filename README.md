@@ -51,7 +51,26 @@ $ ups
 此时可以用其他客户端工具连接服务，测试服务可用性，具体使用文档不必细表，
 与官方一致即可.
 
-## 访问已上传的文件
+## 使用 upc 访问测试
+
+UPC[https://gitcafe.com/likang/upc-for-UPYUN] 是笔者的另一个项目，它支持在命令行
+操作又拍云服务的资源，鉴于本项目与又拍云服务的接口兼容，因此可以使用 UPC 进行访问测试。
+
+如果你已经在本地启动了 UPS 假设端口是8080 那么将以下配置加入到 ~/.upcrc 文件中：
+
+```
+[your-bucket-name]
+username=foo
+password=bar
+timeout=
+chunksize=
+endpoint=127.0.0.1:8080
+```
+
+你将可以使用 upc your-bucket-name 访问刚刚配置的 UPS 服务。
+
+
+## 通过浏览器查看已上传的文件
 
 可以使用浏览器直接访问 http://host:port/your-bucket-name/path/to/yourfile
 来查看或下载文件
